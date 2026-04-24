@@ -1,0 +1,16 @@
+services:
+  dlu-chatbot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: dlu-chatbot
+    restart: unless-stopped
+    env_file:
+      - .env
+    ports:
+      - "8000:8000"
+    volumes:
+      - chromadb_data:/app/vector_store
+
+volumes:
+  chromadb_data:
