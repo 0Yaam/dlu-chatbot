@@ -1,1 +1,15 @@
 *.md
+.env
+.DS_Store
+node_modules/
+dist/
+coverage/
+*.log
+.idea/
+.vscode/
+*.iml
+*.sublime-project
+*.sublime-workspace
+*.swp
+*.bak
+.venv/
