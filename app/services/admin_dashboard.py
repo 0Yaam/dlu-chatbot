@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 import chromadb
-from groq import Groq
+from openai import OpenAI
 
 
 logger = logging.getLogger(__name__)
@@ -192,21 +192,39 @@ def mask_secret(secret: str, visible_chars: int = 4) -> str:
     return f"{secret[:visible_chars]}{'*' * max(4, len(secret) - visible_chars * 2)}{secret[-visible_chars:]}"
 
 
-def check_groq_connection(api_key: str | None, model_name: str | None = None) -> dict[str, Any]:
-    """Validate Groq API reachability with the same SDK family used by runtime."""
+def check_openrouter_connection(
+    api_key: str | None,
+    model_name: str | None = None,
+    *,
+    site_url: str = "",
+    site_name: str = "DLU Chatbot",
+) -> dict[str, Any]:
+    """Validate OpenRouter API reachability with the same SDK family used by runtime."""
     if not api_key:
-        return {"ok": False, "label": "Chua cau hinh", "detail": "Thieu GROQ_API_KEY"}
+        return {"ok": False, "label": "Chua cau hinh", "detail": "Thieu OPENROUTER_API_KEY"}
 
     try:
-        client = Groq(api_key=api_key)
-        models = client.models.list()
-        model_ids = [item.id for item in getattr(models, "data", [])]
-        if model_name and model_name in model_ids:
-            detail = f"Da ket noi. Model {model_name} san sang."
-        elif model_name:
-            detail = f"Da ket noi. Model runtime: {model_name}."
-        else:
-            detail = "Da ket noi toi Groq API."
+        headers: dict[str, str] = {}
+        if site_url:
+            headers["HTTP-Referer"] = site_url
+        if site_name:
+            headers["X-OpenRouter-Title"] = site_name
+        client = OpenAI(
+            base_url="https://openrouter.ai/api/v1",
+            api_key=api_key,
+            default_headers=headers or None,
+        )
+        selected_model = model_name or "meta-llama/llama-3.1-8b-instruct"
+        client.chat.completions.create(
+            model=selected_model,
+            max_tokens=1,
+            temperature=0,
+            messages=[
+                {"role": "system", "content": "Reply with OK only."},
+                {"role": "user", "content": "health"},
+            ],
+        )
+        detail = f"Da ket noi. Model {selected_model} san sang."
         return {"ok": True, "label": "Da ket noi", "detail": detail}
     except Exception as exc:
         message = str(exc)

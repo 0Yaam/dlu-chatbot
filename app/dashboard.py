@@ -15,7 +15,7 @@ if str(PROJECT_ROOT) not in sys.path:
 from app.core.config import get_settings
 from app.services.admin_dashboard import (
     check_chromadb_connection,
-    check_groq_connection,
+    check_openrouter_connection,
     compute_dashboard_metrics,
     format_bytes,
     get_pdf_inventory,
@@ -27,7 +27,7 @@ from app.services.admin_dashboard import (
 )
 from app.services.ai_response import (
     get_embeddings,
-    get_groq_client,
+    get_openrouter_client,
     get_vector_store,
     inspect_rag_pipeline,
 )
@@ -680,7 +680,7 @@ def clear_runtime_caches() -> None:
     get_settings.cache_clear()
     get_embeddings.cache_clear()
     get_vector_store.cache_clear()
-    get_groq_client.cache_clear()
+    get_openrouter_client.cache_clear()
 
 
 def run_async_task(coroutine):
@@ -701,7 +701,9 @@ def load_settings_snapshot() -> dict[str, str]:
     try:
         settings = get_settings()
         return {
-            "groq_model": settings.groq_model,
+            "openrouter_model": settings.openrouter_model,
+            "openrouter_site_url": settings.openrouter_site_url,
+            "openrouter_site_name": settings.openrouter_site_name,
             "chroma_collection": settings.chroma_collection,
             "chroma_persist_dir": str(settings.chroma_persist_dir),
             "embedding_model": settings.embedding_model,
@@ -709,7 +711,9 @@ def load_settings_snapshot() -> dict[str, str]:
         }
     except Exception:
         return {
-            "groq_model": env_values.get("GROQ_MODEL", "llama-3.1-8b-instant"),
+            "openrouter_model": env_values.get("OPENROUTER_MODEL", env_values.get("GROQ_MODEL", "meta-llama/llama-3.1-8b-instruct")),
+            "openrouter_site_url": env_values.get("OPENROUTER_SITE_URL", ""),
+            "openrouter_site_name": env_values.get("OPENROUTER_SITE_NAME", "DLU Chatbot"),
             "chroma_collection": env_values.get("CHROMA_COLLECTION", "dlu_knowledge"),
             "chroma_persist_dir": env_values.get("CHROMA_PERSIST_DIR", "vector_store"),
             "embedding_model": env_values.get(
@@ -896,7 +900,7 @@ def run_indexing_workflow(settings_snapshot: dict[str, str]) -> None:
 def render_overview_page(
     metrics: dict[str, Any],
     pdf_inventory: list[dict[str, Any]],
-    groq_status: dict[str, Any],
+    openrouter_status: dict[str, Any],
     chroma_status: dict[str, Any],
     settings_snapshot: dict[str, str],
 ) -> None:
@@ -905,7 +909,7 @@ def render_overview_page(
         "fa-solid fa-layer-group",
         "System Overview",
         "Tổng quan hệ thống",
-        "Theo dõi nhanh tình trạng vận hành của chatbot RAG, số lượng tài liệu tri thức, độ trễ phản hồi và kết nối tới Groq cùng ChromaDB.",
+        "Theo dõi nhanh tình trạng vận hành của chatbot RAG, số lượng tài liệu tri thức, độ trễ phản hồi và kết nối tới OpenRouter cùng ChromaDB.",
     )
 
     top_cards = st.columns(4)
@@ -916,8 +920,8 @@ def render_overview_page(
     with top_cards[2]:
         render_stat_card("Latency trung bình", f'{metrics["average_response_ms"]:.0f} ms', "Độ trễ phản hồi trung bình của chatbot.", "fa-solid fa-gauge-high")
     with top_cards[3]:
-        online_label = "Online" if groq_status["ok"] and chroma_status["ok"] else "Cần kiểm tra"
-        render_stat_card("Trạng thái hệ thống", online_label, "Tổng hợp Groq API và ChromaDB.", "fa-solid fa-signal")
+        online_label = "Online" if openrouter_status["ok"] and chroma_status["ok"] else "Cần kiểm tra"
+        render_stat_card("Trạng thái hệ thống", online_label, "Tổng hợp OpenRouter API và ChromaDB.", "fa-solid fa-signal")
 
     st.write("")
     left_col, right_col = st.columns(2, gap="large")
@@ -945,7 +949,7 @@ def render_overview_page(
                     <div class="summary-item">
                         <div class="summary-item-icon"><i class="fa-solid fa-brain"></i></div>
                         <div>
-                            <p class="summary-item-title">Groq và Llama 3</p>
+                            <p class="summary-item-title">OpenRouter và LLM</p>
                             <p class="summary-item-text">Tạo câu trả lời cuối cùng dựa trên ngữ cảnh mà hệ thống truy xuất được.</p>
                         </div>
                     </div>
@@ -965,8 +969,8 @@ def render_overview_page(
                     <div class="summary-item">
                         <div class="summary-item-icon"><i class="fa-solid fa-bolt"></i></div>
                         <div>
-                            <p class="summary-item-title">Groq API</p>
-                            <p class="summary-item-text">{escape(groq_status["label"])} · {escape(groq_status["detail"])}</p>
+                            <p class="summary-item-title">OpenRouter API</p>
+                            <p class="summary-item-text">{escape(openrouter_status["label"])} · {escape(openrouter_status["detail"])}</p>
                         </div>
                     </div>
                     <div class="summary-item">
@@ -978,7 +982,7 @@ def render_overview_page(
                     </div>
                 </div>
                 <div class="chip-row" style="margin-top:0.9rem;">
-                    <span class="chip"><i class="fa-solid fa-brain"></i>{escape(settings_snapshot["groq_model"])}</span>
+                    <span class="chip"><i class="fa-solid fa-brain"></i>{escape(settings_snapshot["openrouter_model"])}</span>
                     <span class="chip"><i class="fa-solid fa-database"></i>{escape(settings_snapshot["chroma_collection"])}</span>
                     <span class="chip"><i class="fa-solid fa-microchip"></i>{escape(settings_snapshot["embedding_device"])}</span>
                     <span class="chip"><i class="fa-solid fa-user-group"></i>{metrics["unique_users"]} người dùng</span>
@@ -1201,7 +1205,7 @@ def render_history_page(records: list[dict[str, Any]], metrics: dict[str, Any]) 
 
 def render_config_page(
     env_values: dict[str, str],
-    groq_status: dict[str, Any],
+    openrouter_status: dict[str, Any],
     chroma_status: dict[str, Any],
 ) -> None:
     """Render the AI configuration page."""
@@ -1209,7 +1213,7 @@ def render_config_page(
         "fa-solid fa-sliders",
         "Runtime Configuration",
         "Cấu hình AI",
-        "Quản lý các thông số quan trọng của runtime, kiểm tra kết nối Groq và ChromaDB, đồng thời cập nhật nhanh file .env ngay trên dashboard.",
+        "Quản lý các thông số quan trọng của runtime, kiểm tra kết nối OpenRouter và ChromaDB, đồng thời cập nhật nhanh file .env ngay trên dashboard.",
     )
 
     status_cols = st.columns(2, gap="large")
@@ -1217,11 +1221,11 @@ def render_config_page(
         st.markdown(
             f"""
             <div class="surface-card">
-                <h3 class="section-title">Groq API</h3>
-                <p class="section-caption">{escape(groq_status["detail"])}</p>
+                <h3 class="section-title">OpenRouter API</h3>
+                <p class="section-caption">{escape(openrouter_status["detail"])}</p>
                 <div class="chip-row">
-                    <span class="chip"><i class="fa-solid fa-bolt"></i>{escape(groq_status["label"])}</span>
-                    <span class="chip"><i class="fa-solid fa-brain"></i>{escape(env_values.get("GROQ_MODEL", "llama-3.1-8b-instant"))}</span>
+                    <span class="chip"><i class="fa-solid fa-bolt"></i>{escape(openrouter_status["label"])}</span>
+                    <span class="chip"><i class="fa-solid fa-brain"></i>{escape(env_values.get("OPENROUTER_MODEL", env_values.get("GROQ_MODEL", "meta-llama/llama-3.1-8b-instruct")))}</span>
                 </div>
             </div>
             """,
@@ -1248,8 +1252,10 @@ def render_config_page(
         st.markdown("### Snapshot cấu hình hiện tại")
         snapshot_rows = [
             {"Thông số": "Telegram token", "Giá trị": mask_secret(env_values.get("TOKEN", ""))},
-            {"Thông số": "Groq API key", "Giá trị": mask_secret(env_values.get("GROQ_API_KEY", ""))},
-            {"Thông số": "Groq model", "Giá trị": env_values.get("GROQ_MODEL", "llama-3.1-8b-instant")},
+            {"Thông số": "OpenRouter API key", "Giá trị": mask_secret(env_values.get("OPENROUTER_API_KEY", env_values.get("GROQ_API_KEY", "")))},
+            {"Thông số": "OpenRouter model", "Giá trị": env_values.get("OPENROUTER_MODEL", env_values.get("GROQ_MODEL", "meta-llama/llama-3.1-8b-instruct"))},
+            {"Thông số": "OpenRouter site URL", "Giá trị": env_values.get("OPENROUTER_SITE_URL", "")},
+            {"Thông số": "OpenRouter site name", "Giá trị": env_values.get("OPENROUTER_SITE_NAME", "DLU Chatbot")},
             {"Thông số": "Chroma collection", "Giá trị": env_values.get("CHROMA_COLLECTION", "dlu_knowledge")},
             {"Thông số": "Persist dir", "Giá trị": env_values.get("CHROMA_PERSIST_DIR", "vector_store")},
             {"Thông số": "Embedding model", "Giá trị": env_values.get("EMBEDDING_MODEL", "")},
@@ -1260,7 +1266,9 @@ def render_config_page(
     with right_col:
         st.markdown("### Cập nhật nhanh file `.env`")
         with st.form("config_form"):
-            groq_model = st.text_input("Groq model", value=env_values.get("GROQ_MODEL", "llama-3.1-8b-instant"))
+            openrouter_model = st.text_input("OpenRouter model", value=env_values.get("OPENROUTER_MODEL", env_values.get("GROQ_MODEL", "meta-llama/llama-3.1-8b-instruct")))
+            openrouter_site_url = st.text_input("OpenRouter site URL", value=env_values.get("OPENROUTER_SITE_URL", ""))
+            openrouter_site_name = st.text_input("OpenRouter site name", value=env_values.get("OPENROUTER_SITE_NAME", "DLU Chatbot"))
             chroma_collection = st.text_input("Chroma collection", value=env_values.get("CHROMA_COLLECTION", "dlu_knowledge"))
             chroma_persist_dir = st.text_input("Chroma persist dir", value=env_values.get("CHROMA_PERSIST_DIR", "vector_store"))
             embedding_model = st.text_input(
@@ -1273,21 +1281,23 @@ def render_config_page(
                 index=0 if env_values.get("EMBEDDING_DEVICE", "cpu") == "cpu" else 1,
             )
             webhook_url = st.text_input("Webhook URL", value=env_values.get("WEBHOOK_URL", ""))
-            new_groq_api_key = st.text_input("Groq API key mới", value="", type="password")
+            new_openrouter_api_key = st.text_input("OpenRouter API key mới", value="", type="password")
             new_token = st.text_input("Telegram token mới", value="", type="password")
             save_button = st.form_submit_button("Lưu cấu hình", width="stretch", type="primary")
 
         if save_button:
             updates = {
-                "GROQ_MODEL": groq_model.strip(),
+                "OPENROUTER_MODEL": openrouter_model.strip(),
+                "OPENROUTER_SITE_URL": openrouter_site_url.strip(),
+                "OPENROUTER_SITE_NAME": openrouter_site_name.strip(),
                 "CHROMA_COLLECTION": chroma_collection.strip(),
                 "CHROMA_PERSIST_DIR": chroma_persist_dir.strip(),
                 "EMBEDDING_MODEL": embedding_model.strip(),
                 "EMBEDDING_DEVICE": embedding_device.strip(),
                 "WEBHOOK_URL": webhook_url.strip(),
             }
-            if new_groq_api_key.strip():
-                updates["GROQ_API_KEY"] = new_groq_api_key.strip()
+            if new_openrouter_api_key.strip():
+                updates["OPENROUTER_API_KEY"] = new_openrouter_api_key.strip()
             if new_token.strip():
                 updates["TOKEN"] = new_token.strip()
 
@@ -1372,7 +1382,7 @@ def render_inspector_page(settings_snapshot: dict[str, str], collection_rows: li
         normalized_query = query or ""
         st.session_state["rag_last_query"] = normalized_query
         st.session_state["rag_error"] = ""
-        with st.spinner("Đang truy xuất ChromaDB và gọi Groq..."):
+        with st.spinner("Đang truy xuất ChromaDB và gọi OpenRouter..."):
             try:
                 st.session_state["rag_result"] = run_async_task(
                     inspect_rag_pipeline(
@@ -1462,9 +1472,11 @@ def main() -> None:
     records = load_conversation_history()
     metrics = compute_dashboard_metrics(records)
     pdf_inventory = get_pdf_inventory()
-    groq_status = check_groq_connection(
-        env_values.get("GROQ_API_KEY"),
-        settings_snapshot["groq_model"],
+    openrouter_status = check_openrouter_connection(
+        env_values.get("OPENROUTER_API_KEY", env_values.get("GROQ_API_KEY")),
+        settings_snapshot["openrouter_model"],
+        site_url=settings_snapshot["openrouter_site_url"],
+        site_name=settings_snapshot["openrouter_site_name"],
     )
     chroma_status = check_chromadb_connection(
         collection_name=settings_snapshot["chroma_collection"],
@@ -1482,7 +1494,7 @@ def main() -> None:
         render_overview_page(
             metrics=metrics,
             pdf_inventory=pdf_inventory,
-            groq_status=groq_status,
+            openrouter_status=openrouter_status,
             chroma_status=chroma_status,
             settings_snapshot=settings_snapshot,
         )
@@ -1499,7 +1511,7 @@ def main() -> None:
     else:
         render_config_page(
             env_values=env_values,
-            groq_status=groq_status,
+            openrouter_status=openrouter_status,
             chroma_status=chroma_status,
         )
 

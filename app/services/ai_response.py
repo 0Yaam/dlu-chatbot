@@ -7,9 +7,9 @@ from functools import lru_cache
 from typing import Any
 
 import chromadb
-from groq import AsyncGroq
 from langchain_chroma import Chroma
 from langchain_huggingface import HuggingFaceEmbeddings
+from openai import AsyncOpenAI
 
 from app.core.config import Settings, get_settings
 
@@ -85,9 +85,18 @@ def get_vector_store(collection_name: str | None = None) -> Chroma:
 
 
 @lru_cache(maxsize=1)
-def get_groq_client() -> AsyncGroq:
+def get_openrouter_client() -> AsyncOpenAI:
     settings = get_settings()
-    return AsyncGroq(api_key=settings.groq_api_key)
+    headers: dict[str, str] = {}
+    if settings.openrouter_site_url:
+        headers["HTTP-Referer"] = settings.openrouter_site_url
+    if settings.openrouter_site_name:
+        headers["X-OpenRouter-Title"] = settings.openrouter_site_name
+    return AsyncOpenAI(
+        base_url=settings.openrouter_base_url,
+        api_key=settings.openrouter_api_key,
+        default_headers=headers or None,
+    )
 
 
 def _retrieve_context_documents(user_query: str, top_k: int, collection_name: str | None = None) -> list:
@@ -131,13 +140,13 @@ def _build_system_prompt(context: str) -> str:
 
 
 async def _generate_answer_from_context(user_query: str, context: str) -> str:
-    """Send the final prompt to Groq and return the generated answer."""
+    """Send the final prompt to OpenRouter and return the generated answer."""
     settings: Settings = get_settings()
-    groq_client = get_groq_client()
-    completion = await groq_client.chat.completions.create(
-        model=settings.groq_model,
+    openrouter_client = get_openrouter_client()
+    completion = await openrouter_client.chat.completions.create(
+        model=settings.openrouter_model,
         temperature=0.2,
-        max_completion_tokens=512,
+        max_tokens=512,
         messages=[
             {"role": "system", "content": _build_system_prompt(context)},
             {"role": "user", "content": user_query},
@@ -230,7 +239,7 @@ async def inspect_rag_pipeline(
             "context": "Không tìm thấy thông tin liên quan trong ChromaDB.",
             "top_k": top_k,
             "collection_name": selected_collection,
-            "model": settings.groq_model,
+            "model": settings.openrouter_model,
             "fallback_used": True,
             "context_sufficient": False,
             "relevance_threshold": MIN_RELEVANCE_SCORE,
@@ -267,7 +276,7 @@ async def inspect_rag_pipeline(
         "context": context,
         "top_k": top_k,
         "collection_name": selected_collection,
-        "model": settings.groq_model,
+        "model": settings.openrouter_model,
         "fallback_used": fallback_used,
         "context_sufficient": bool(relevant_items) and has_overlap and not fallback_used,
         "relevance_threshold": MIN_RELEVANCE_SCORE,
@@ -275,6 +284,6 @@ async def inspect_rag_pipeline(
 
 
 async def get_ai_response(user_query: str) -> str:
-    """Retrieve top-k context from ChromaDB and generate a final answer with Groq."""
+    """Retrieve top-k context from ChromaDB and generate a final answer with OpenRouter."""
     result = await inspect_rag_pipeline(user_query, top_k=TOP_K)
     return result["answer"]
