@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import re
 from pathlib import Path
+from typing import Callable
 
 import chromadb
 import pdfplumber
@@ -23,6 +24,8 @@ class DLUKnowledgeIndexer:
         chunk_size: int = 800,
         chunk_overlap: int = 150,
         device: str = "cpu",
+        log_callback: Callable[[str], None] | None = None,
+        progress_callback: Callable[[float, str], None] | None = None,
     ) -> None:
         self.data_dir = Path(data_dir)
         self.persist_dir = Path(persist_dir)
@@ -31,6 +34,8 @@ class DLUKnowledgeIndexer:
         self.chunk_size = chunk_size
         self.chunk_overlap = chunk_overlap
         self.device = device
+        self.log_callback = log_callback
+        self.progress_callback = progress_callback
 
         self.splitter = RecursiveCharacterTextSplitter(
             chunk_size=self.chunk_size,
@@ -50,51 +55,97 @@ class DLUKnowledgeIndexer:
             device=self.device,
         )
 
-    def run(self) -> None:
-        """Load, chunk, embed, and store all supported documents."""
-        print("=" * 80)
-        print("BAT DAU INDEX DU LIEU CHO DLU CHATBOT")
-        print(f"Thu muc data: {self.data_dir.resolve()}")
-        print(f"Thu muc vector_store: {self.persist_dir.resolve()}")
-        print(f"Collection: {self.collection_name}")
-        print(f"Embedding model: {self.embedding_model_name}")
-        print("=" * 80)
+    def _log(self, message: str) -> None:
+        """Send a log line to stdout and optional UI callback."""
+        print(message)
+        if self.log_callback is not None:
+            self.log_callback(message)
 
-        documents = self.load_documents()
-        if not documents:
-            print("Khong co document hop le nao de index.")
-            return
+    def _report_progress(self, value: float, status: str) -> None:
+        """Emit progress updates in the 0..1 range."""
+        if self.progress_callback is not None:
+            clamped_value = max(0.0, min(1.0, value))
+            self.progress_callback(clamped_value, status)
 
-        self.create_vector_db(documents)
-        print(f"Hoan tat. Tong so chunk da dua vao ChromaDB: {len(documents)}")
-
-    def load_documents(self) -> list[Document]:
-        """Process all supported files in the raw data directory."""
+    def get_supported_files(self) -> list[Path]:
+        """Return the supported raw files available for indexing."""
         if not self.data_dir.exists():
-            print(f"Khong tim thay thu muc data: {self.data_dir}")
             return []
 
-        all_chunks: list[Document] = []
-        supported_files = sorted(
+        return sorted(
             path
             for path in self.data_dir.iterdir()
             if path.is_file() and path.suffix.lower() in {".pdf", ".txt"}
         )
 
-        if not supported_files:
-            print(f"Thu muc {self.data_dir} khong co file .pdf hoac .txt nao.")
+    def run(self) -> dict[str, int | str]:
+        """Load, chunk, embed, and store all supported documents."""
+        self._report_progress(0.02, "Dang khoi tao tien trinh indexing...")
+        self._log("=" * 80)
+        self._log("BAT DAU INDEX DU LIEU CHO DLU CHATBOT")
+        self._log(f"Thu muc data: {self.data_dir.resolve()}")
+        self._log(f"Thu muc vector_store: {self.persist_dir.resolve()}")
+        self._log(f"Collection: {self.collection_name}")
+        self._log(f"Embedding model: {self.embedding_model_name}")
+        self._log("=" * 80)
+
+        supported_files = self.get_supported_files()
+        self._report_progress(0.08, f"Da tim thay {len(supported_files)} tep ho tro trong thu muc data.")
+        documents = self.load_documents(supported_files=supported_files)
+        if not documents:
+            self._log("Khong co document hop le nao de index.")
+            self._report_progress(1.0, "Khong co du lieu hop le de indexing.")
+            return {
+                "files_indexed": len(supported_files),
+                "chunks_indexed": 0,
+                "collection_name": self.collection_name,
+                "vector_count": self.collection.count(),
+            }
+
+        self._report_progress(0.55, f"Da tao {len(documents)} chunks. Bat dau dua vector vao ChromaDB...")
+        vector_count = self.create_vector_db(documents)
+        self._log(f"Hoan tat. Tong so chunk da dua vao ChromaDB: {len(documents)}")
+        self._report_progress(1.0, "Indexing hoan tat.")
+        return {
+            "files_indexed": len(supported_files),
+            "chunks_indexed": len(documents),
+            "collection_name": self.collection_name,
+            "vector_count": vector_count,
+        }
+
+    def load_documents(self, supported_files: list[Path] | None = None) -> list[Document]:
+        """Process all supported files in the raw data directory."""
+        if not self.data_dir.exists():
+            self._log(f"Khong tim thay thu muc data: {self.data_dir}")
             return []
 
-        for file_path in supported_files:
+        all_chunks: list[Document] = []
+        supported_files = supported_files or self.get_supported_files()
+
+        if not supported_files:
+            self._log(f"Thu muc {self.data_dir} khong co file .pdf hoac .txt nao.")
+            return []
+
+        total_files = len(supported_files)
+        for file_index, file_path in enumerate(supported_files, start=1):
+            self._report_progress(
+                0.10 + ((file_index - 1) / max(total_files, 1)) * 0.40,
+                f"Dang xu ly file {file_index}/{total_files}: {file_path.name}",
+            )
             try:
-                print(f"\nDang xu ly file: {file_path.name}")
+                self._log(f"\nDang xu ly file: {file_path.name}")
                 file_chunks = self.process_file(file_path)
-                print(f"Da tao {len(file_chunks)} chunk tu file {file_path.name}")
+                self._log(f"Da tao {len(file_chunks)} chunk tu file {file_path.name}")
                 all_chunks.extend(file_chunks)
             except Exception as exc:
-                print(f"Loi khi xu ly file {file_path.name}: {exc}")
+                self._log(f"Loi khi xu ly file {file_path.name}: {exc}")
 
-        print(f"\nTong so chunk sau khi xu ly tat ca file: {len(all_chunks)}")
+            self._report_progress(
+                0.10 + (file_index / max(total_files, 1)) * 0.40,
+                f"Da xu ly xong {file_index}/{total_files} file.",
+            )
+
+        self._log(f"\nTong so chunk sau khi xu ly tat ca file: {len(all_chunks)}")
         return all_chunks
 
     def process_file(self, file_path: Path) -> list[Document]:
@@ -108,14 +159,14 @@ class DLUKnowledgeIndexer:
         if suffix == ".txt":
             return self.process_text_file(file_path)
 
-        print(f"Bo qua file khong ho tro: {file_path.name}")
+        self._log(f"Bo qua file khong ho tro: {file_path.name}")
         return []
 
     def process_faq_file(self, file_path: Path) -> list[Document]:
         """Split FAQ into question-answer blocks, fallback to recursive splitting when needed."""
         raw_text = self.read_text_file(file_path)
         if not raw_text.strip():
-            print(f"File {file_path.name} khong co noi dung.")
+            self._log(f"File {file_path.name} khong co noi dung.")
             return []
 
         faq_blocks = [block.strip() for block in re.split(r"\n\s*\n", raw_text) if block.strip()]
@@ -139,7 +190,7 @@ class DLUKnowledgeIndexer:
         """Process generic text files with recursive splitting."""
         raw_text = self.read_text_file(file_path)
         if not raw_text.strip():
-            print(f"File {file_path.name} khong co noi dung.")
+            self._log(f"File {file_path.name} khong co noi dung.")
             return []
 
         return self.chunk_text(
@@ -152,14 +203,14 @@ class DLUKnowledgeIndexer:
         """Extract PDF text, try splitting by 'Dieu', then fallback to recursive splitting."""
         full_text = self.extract_pdf_text(file_path)
         if not full_text.strip():
-            print(f"Khong doc duoc noi dung tu file PDF: {file_path.name}")
+            self._log(f"Khong doc duoc noi dung tu file PDF: {file_path.name}")
             return []
 
         article_sections = self.split_by_dieu(full_text)
         documents: list[Document] = []
 
         if not article_sections:
-            print(f"Khong tim thay cac muc 'Dieu' trong {file_path.name}. Fallback sang recursive split.")
+            self._log(f"Khong tim thay cac muc 'Dieu' trong {file_path.name}. Fallback sang recursive split.")
             return self.chunk_text(
                 text=full_text,
                 metadata={"source": file_path.name, "source_type": "pdf"},
@@ -199,9 +250,9 @@ class DLUKnowledgeIndexer:
                         normalized = self.normalize_text(page_text)
                         pages.append(normalized)
                     else:
-                        print(f"Trang {page_number} cua {file_path.name} khong co text.")
+                        self._log(f"Trang {page_number} cua {file_path.name} khong co text.")
                 except Exception as exc:
-                    print(f"Loi khi doc trang {page_number} cua {file_path.name}: {exc}")
+                    self._log(f"Loi khi doc trang {page_number} cua {file_path.name}: {exc}")
 
         return "\n\n".join(pages)
 
@@ -238,18 +289,23 @@ class DLUKnowledgeIndexer:
         chunks = self.splitter.create_documents([clean_text], metadatas=[metadata | {"chunk_method": method}])
         return chunks
 
-    def create_vector_db(self, documents: list[Document], batch_size: int = 32) -> None:
+    def create_vector_db(self, documents: list[Document], batch_size: int = 32) -> int:
         """Embed documents locally and upsert them into ChromaDB."""
         if not documents:
-            print("Khong co chunk nao de luu vao ChromaDB.")
-            return
+            self._log("Khong co chunk nao de luu vao ChromaDB.")
+            return self.collection.count()
 
-        print("\nBat dau tao embedding va luu vao ChromaDB...")
-        for batch_start in range(0, len(documents), batch_size):
+        self._log("\nBat dau tao embedding va luu vao ChromaDB...")
+        total_batches = max(1, (len(documents) + batch_size - 1) // batch_size)
+        for batch_index, batch_start in enumerate(range(0, len(documents), batch_size), start=1):
             batch_docs = documents[batch_start : batch_start + batch_size]
             batch_ids = [self.build_document_id(doc, batch_start + offset) for offset, doc in enumerate(batch_docs)]
             batch_texts = [doc.page_content for doc in batch_docs]
             batch_metadatas = [self.sanitize_metadata(doc.metadata) for doc in batch_docs]
+            self._report_progress(
+                0.55 + ((batch_index - 1) / total_batches) * 0.43,
+                f"Dang tao embedding batch {batch_index}/{total_batches}...",
+            )
 
             try:
                 batch_embeddings = self.embedding_model.encode(
@@ -265,14 +321,20 @@ class DLUKnowledgeIndexer:
                     metadatas=batch_metadatas,
                     embeddings=batch_embeddings,
                 )
-                print(
+                self._log(
                     f"Da luu batch {batch_start + 1}-{batch_start + len(batch_docs)} / {len(documents)} vao ChromaDB"
                 )
             except Exception as exc:
-                print(f"Loi khi luu batch {batch_start + 1}-{batch_start + len(batch_docs)}: {exc}")
+                self._log(f"Loi khi luu batch {batch_start + 1}-{batch_start + len(batch_docs)}: {exc}")
+
+            self._report_progress(
+                0.55 + (batch_index / total_batches) * 0.43,
+                f"Da hoan tat batch {batch_index}/{total_batches}.",
+            )
 
         total_in_collection = self.collection.count()
-        print(f"Collection '{self.collection_name}' hien co tong cong {total_in_collection} vector.")
+        self._log(f"Collection '{self.collection_name}' hien co tong cong {total_in_collection} vector.")
+        return total_in_collection
 
     @staticmethod
     def read_text_file(file_path: Path) -> str:

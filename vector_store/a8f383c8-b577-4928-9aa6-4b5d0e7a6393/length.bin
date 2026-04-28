@@ -1,7 +1,1 @@
-Khu vực 1 (02 bản);
-- Thương binh, người hưởng chính sách như thương binh;
-- Con liệt sĩ;
-- Anh hùng lực lượng vũ trang, anh hùng lao động;
-- Người dân tộc thiểu số có hộ khẩu thường trú từ 2 năm trở lên ở địa
-phương được quy định là Khu vực 1 trong Quy chế tuyển sinh đại học, cao đẳng
-hệ chính quy hiện hành
+invalid type: string "ĐỊA CHỈ CÁC BỘ PHẬN CẦN THIẾT\nCÁC BỘ PHẦN PHÒNG BAN CẦN LIÊN HỆ\nSTT Tên phòng Số điện thoại Email Ghi chú\n1 Phòng Quản lý đào tạo 0263. 325091 Phongcongtacsinhvien@dlu.edu.vn Liên hệ\ntrực tiếp\ncác vấn đề\nliên quan\nđến công\ntác đào\ntạo của\nNhà\ntrường.\nại: 091 822 0452\n57", expected a boolean
