@@ -1,5 +1,6 @@
 .git
 .gitignore
+.env
 .venv
 __pycache__
 *.pyc
@@ -9,6 +10,13 @@ __pycache__
 .pytest_cache
 .mypy_cache
 .ruff_cache
-vector_store
-data
 project_overview.md
+.streamlit_stdout.log
+.streamlit_stderr.log
+bootstrap_stdout.log
+bootstrap_stderr.log
+streamlit_*.log
+ws_dash_*.log
+__bootstrap_launch_tmp.py
+start_dashboard.bat
+run_all.bat

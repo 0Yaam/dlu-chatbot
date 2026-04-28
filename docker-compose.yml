@@ -1,16 +1,52 @@
 services:
-  dlu-chatbot:
+  backend:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: dlu-chatbot
+      target: backend
+    container_name: dlu-chatbot-backend
     restart: unless-stopped
     env_file:
       - .env
     ports:
       - "8000:8000"
     volumes:
-      - chromadb_data:/app/vector_store
+      - dlu_data:/app/data
+      - dlu_vector_store:/app/vector_store
+      - dlu_model_cache:/app/.cache
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  dashboard:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: dashboard
+    container_name: dlu-chatbot-dashboard
+    restart: unless-stopped
+    env_file:
+      - .env
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "8511:8511"
+    volumes:
+      - dlu_data:/app/data
+      - dlu_vector_store:/app/vector_store
+      - dlu_model_cache:/app/.cache
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8511/', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 40s
 
 volumes:
-  chromadb_data:
+  dlu_data:
+  dlu_vector_store:
+  dlu_model_cache:
