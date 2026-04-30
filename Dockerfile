@@ -3,9 +3,11 @@ FROM python:3.11-slim AS base
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
     HF_HOME=/app/.cache/huggingface \
     SENTENCE_TRANSFORMERS_HOME=/app/.cache/sentence-transformers \
-    STREAMLIT_BROWSER_GATHER_USAGE_STATS=false
+    STREAMLIT_BROWSER_GATHER_USAGE_STATS=false \
+    PATH="/home/appuser/.local/bin:${PATH}"
 
 WORKDIR /app
 
@@ -18,9 +20,21 @@ COPY requirements.txt ./
 RUN pip install --upgrade pip \
     && pip install --no-cache-dir -r requirements.txt
 
-COPY . .
+COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 
-RUN mkdir -p /app/data /app/vector_store /app/.cache/huggingface
+COPY app ./app
+COPY data ./data
+COPY dashboard.py ./
+COPY .env.example ./.env.example
+
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh \
+    && mkdir -p /app/data /app/vector_store /app/.cache/huggingface \
+    && useradd --create-home --shell /bin/sh appuser \
+    && chown -R appuser:appuser /app
+
+USER appuser
+
+ENTRYPOINT ["docker-entrypoint.sh"]
 
 
 FROM base AS backend
