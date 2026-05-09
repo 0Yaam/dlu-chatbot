@@ -33,8 +33,6 @@ RUN chmod +x /usr/local/bin/docker-entrypoint.sh \
     && useradd --create-home --shell /bin/sh appuser \
     && chown -R appuser:appuser /app
 
-USER appuser
-
 ENTRYPOINT ["docker-entrypoint.sh"]
 
 

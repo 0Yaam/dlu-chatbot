@@ -5,11 +5,12 @@ import re
 from pathlib import Path
 from typing import Callable
 
-import chromadb
 import pdfplumber
 from langchain_core.documents import Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from sentence_transformers import SentenceTransformer
+
+from app.services.chroma_utils import close_chroma_client, get_or_create_collection, is_stale_chroma_error
 
 
 class DLUKnowledgeIndexer:
@@ -45,10 +46,11 @@ class DLUKnowledgeIndexer:
         )
 
         self.persist_dir.mkdir(parents=True, exist_ok=True)
-        self.client = chromadb.PersistentClient(path=str(self.persist_dir))
-        self.collection = self.client.get_or_create_collection(
-            name=self.collection_name,
+        self.client, self.collection = get_or_create_collection(
+            persist_dir=self.persist_dir,
+            collection_name=self.collection_name,
             metadata={"hnsw:space": "cosine"},
+            reset_cache=True,
         )
         self.embedding_model = SentenceTransformer(
             self.embedding_model_name,
@@ -80,38 +82,41 @@ class DLUKnowledgeIndexer:
 
     def run(self) -> dict[str, int | str]:
         """Load, chunk, embed, and store all supported documents."""
-        self._report_progress(0.02, "Dang khoi tao tien trinh indexing...")
-        self._log("=" * 80)
-        self._log("BAT DAU INDEX DU LIEU CHO DLU CHATBOT")
-        self._log(f"Thu muc data: {self.data_dir.resolve()}")
-        self._log(f"Thu muc vector_store: {self.persist_dir.resolve()}")
-        self._log(f"Collection: {self.collection_name}")
-        self._log(f"Embedding model: {self.embedding_model_name}")
-        self._log("=" * 80)
+        try:
+            self._report_progress(0.02, "Dang khoi tao tien trinh indexing...")
+            self._log("=" * 80)
+            self._log("BAT DAU INDEX DU LIEU CHO DLU CHATBOT")
+            self._log(f"Thu muc data: {self.data_dir.resolve()}")
+            self._log(f"Thu muc vector_store: {self.persist_dir.resolve()}")
+            self._log(f"Collection: {self.collection_name}")
+            self._log(f"Embedding model: {self.embedding_model_name}")
+            self._log("=" * 80)
 
-        supported_files = self.get_supported_files()
-        self._report_progress(0.08, f"Da tim thay {len(supported_files)} tep ho tro trong thu muc data.")
-        documents = self.load_documents(supported_files=supported_files)
-        if not documents:
-            self._log("Khong co document hop le nao de index.")
-            self._report_progress(1.0, "Khong co du lieu hop le de indexing.")
+            supported_files = self.get_supported_files()
+            self._report_progress(0.08, f"Da tim thay {len(supported_files)} tep ho tro trong thu muc data.")
+            documents = self.load_documents(supported_files=supported_files)
+            if not documents:
+                self._log("Khong co document hop le nao de index.")
+                self._report_progress(1.0, "Khong co du lieu hop le de indexing.")
+                return {
+                    "files_indexed": len(supported_files),
+                    "chunks_indexed": 0,
+                    "collection_name": self.collection_name,
+                    "vector_count": self.collection.count(),
+                }
+
+            self._report_progress(0.55, f"Da tao {len(documents)} chunks. Bat dau dua vector vao ChromaDB...")
+            vector_count = self.create_vector_db(documents)
+            self._log(f"Hoan tat. Tong so chunk da dua vao ChromaDB: {len(documents)}")
+            self._report_progress(1.0, "Indexing hoan tat.")
             return {
                 "files_indexed": len(supported_files),
-                "chunks_indexed": 0,
+                "chunks_indexed": len(documents),
                 "collection_name": self.collection_name,
-                "vector_count": self.collection.count(),
+                "vector_count": vector_count,
             }
-
-        self._report_progress(0.55, f"Da tao {len(documents)} chunks. Bat dau dua vector vao ChromaDB...")
-        vector_count = self.create_vector_db(documents)
-        self._log(f"Hoan tat. Tong so chunk da dua vao ChromaDB: {len(documents)}")
-        self._report_progress(1.0, "Indexing hoan tat.")
-        return {
-            "files_indexed": len(supported_files),
-            "chunks_indexed": len(documents),
-            "collection_name": self.collection_name,
-            "vector_count": vector_count,
-        }
+        finally:
+            close_chroma_client(self.client)
 
     def load_documents(self, supported_files: list[Path] | None = None) -> list[Document]:
         """Process all supported files in the raw data directory."""
@@ -307,25 +312,37 @@ class DLUKnowledgeIndexer:
                 f"Dang tao embedding batch {batch_index}/{total_batches}...",
             )
 
-            try:
-                batch_embeddings = self.embedding_model.encode(
-                    batch_texts,
-                    batch_size=batch_size,
-                    normalize_embeddings=True,
-                    show_progress_bar=False,
-                ).tolist()
+            batch_embeddings = self.embedding_model.encode(
+                batch_texts,
+                batch_size=batch_size,
+                normalize_embeddings=True,
+                show_progress_bar=False,
+            ).tolist()
 
+            try:
                 self.collection.upsert(
                     ids=batch_ids,
                     documents=batch_texts,
                     metadatas=batch_metadatas,
                     embeddings=batch_embeddings,
                 )
-                self._log(
-                    f"Da luu batch {batch_start + 1}-{batch_start + len(batch_docs)} / {len(documents)} vao ChromaDB"
-                )
             except Exception as exc:
-                self._log(f"Loi khi luu batch {batch_start + 1}-{batch_start + len(batch_docs)}: {exc}")
+                if not is_stale_chroma_error(exc):
+                    self._log(f"Loi khi luu batch {batch_start + 1}-{batch_start + len(batch_docs)}: {exc}")
+                    raise
+
+                self._log("ChromaDB bi stale Rust binding, dang tao lai ket noi va thu lai batch...")
+                self.reconnect_chromadb()
+                self.collection.upsert(
+                    ids=batch_ids,
+                    documents=batch_texts,
+                    metadatas=batch_metadatas,
+                    embeddings=batch_embeddings,
+                )
+
+            self._log(
+                f"Da luu batch {batch_start + 1}-{batch_start + len(batch_docs)} / {len(documents)} vao ChromaDB"
+            )
 
             self._report_progress(
                 0.55 + (batch_index / total_batches) * 0.43,
@@ -335,6 +352,16 @@ class DLUKnowledgeIndexer:
         total_in_collection = self.collection.count()
         self._log(f"Collection '{self.collection_name}' hien co tong cong {total_in_collection} vector.")
         return total_in_collection
+
+    def reconnect_chromadb(self) -> None:
+        """Recreate the Chroma client after its cached Rust binding becomes stale."""
+        close_chroma_client(self.client)
+        self.client, self.collection = get_or_create_collection(
+            persist_dir=self.persist_dir,
+            collection_name=self.collection_name,
+            metadata={"hnsw:space": "cosine"},
+            reset_cache=True,
+        )
 
     @staticmethod
     def read_text_file(file_path: Path) -> str:

@@ -31,6 +31,7 @@ from app.services.ai_response import (
     get_vector_store,
     inspect_rag_pipeline,
 )
+from app.services.chroma_utils import clear_chroma_system_cache
 from app.services.pdf_indexer import DLUKnowledgeIndexer
 
 
@@ -681,6 +682,7 @@ def clear_runtime_caches() -> None:
     get_embeddings.cache_clear()
     get_vector_store.cache_clear()
     get_openrouter_client.cache_clear()
+    clear_chroma_system_cache()
 
 
 def run_async_task(coroutine):

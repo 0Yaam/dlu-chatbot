@@ -1,6 +1,9 @@
 #!/bin/sh
 set -eu
 
+mkdir -p /app/data /app/vector_store /app/.cache
+chmod -R u+rwX /app/data /app/vector_store /app/.cache 2>/dev/null || true
+
 if [ -f /app/.env ]; then
   exec "$@"
 fi

@@ -7,8 +7,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-import chromadb
 from openai import OpenAI
+
+from app.services.chroma_utils import get_or_create_collection
 
 
 logger = logging.getLogger(__name__)
@@ -240,8 +241,11 @@ def check_openrouter_connection(
 def check_chromadb_connection(collection_name: str, persist_dir: str | Path) -> dict[str, Any]:
     """Check local ChromaDB health and collection size."""
     try:
-        client = chromadb.PersistentClient(path=str(Path(persist_dir)))
-        collection = client.get_or_create_collection(name=collection_name, metadata={"hnsw:space": "cosine"})
+        _client, collection = get_or_create_collection(
+            persist_dir=persist_dir,
+            collection_name=collection_name,
+            metadata={"hnsw:space": "cosine"},
+        )
         vector_count = collection.count()
         return {
             "ok": True,
@@ -256,7 +260,9 @@ def check_chromadb_connection(collection_name: str, persist_dir: str | Path) -> 
 def list_chroma_collections(persist_dir: str | Path) -> list[dict[str, Any]]:
     """List local ChromaDB collections with document counts for admin views."""
     try:
-        client = chromadb.PersistentClient(path=str(Path(persist_dir)))
+        from app.services.chroma_utils import create_persistent_client
+
+        client = create_persistent_client(Path(persist_dir))
         collections = []
         for collection in client.list_collections():
             collections.append(

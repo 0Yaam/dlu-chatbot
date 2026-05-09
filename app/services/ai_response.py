@@ -6,12 +6,12 @@ import unicodedata
 from functools import lru_cache
 from typing import Any
 
-import chromadb
 from langchain_chroma import Chroma
 from langchain_huggingface import HuggingFaceEmbeddings
 from openai import AsyncOpenAI
 
 from app.core.config import Settings, get_settings
+from app.services.chroma_utils import clear_chroma_system_cache, create_persistent_client, is_stale_chroma_error
 
 
 TOP_K = 3
@@ -76,7 +76,7 @@ def get_embeddings() -> HuggingFaceEmbeddings:
 def get_vector_store(collection_name: str | None = None) -> Chroma:
     settings = get_settings()
     settings.chroma_persist_dir.mkdir(parents=True, exist_ok=True)
-    client = chromadb.PersistentClient(path=str(settings.chroma_persist_dir))
+    client = create_persistent_client(settings.chroma_persist_dir)
     return Chroma(
         client=client,
         collection_name=collection_name or settings.chroma_collection,
@@ -101,7 +101,15 @@ def get_openrouter_client() -> AsyncOpenAI:
 
 def _retrieve_context_documents(user_query: str, top_k: int, collection_name: str | None = None) -> list:
     vector_store = get_vector_store(collection_name)
-    return vector_store.similarity_search(user_query, k=top_k)
+    try:
+        return vector_store.similarity_search(user_query, k=top_k)
+    except Exception as exc:
+        if not is_stale_chroma_error(exc):
+            raise
+        get_vector_store.cache_clear()
+        clear_chroma_system_cache()
+        vector_store = get_vector_store(collection_name)
+        return vector_store.similarity_search(user_query, k=top_k)
 
 
 def _retrieve_context_documents_with_scores(
@@ -110,7 +118,15 @@ def _retrieve_context_documents_with_scores(
     collection_name: str | None = None,
 ) -> list[tuple[Any, float]]:
     vector_store = get_vector_store(collection_name)
-    return vector_store.similarity_search_with_relevance_scores(user_query, k=top_k)
+    try:
+        return vector_store.similarity_search_with_relevance_scores(user_query, k=top_k)
+    except Exception as exc:
+        if not is_stale_chroma_error(exc):
+            raise
+        get_vector_store.cache_clear()
+        clear_chroma_system_cache()
+        vector_store = get_vector_store(collection_name)
+        return vector_store.similarity_search_with_relevance_scores(user_query, k=top_k)
 
 
 def _format_context(documents: list) -> str:
