@@ -23,6 +23,7 @@ RUN pip install --upgrade pip \
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 
 COPY app ./app
+COPY .streamlit ./.streamlit
 COPY data ./data
 COPY dashboard.py ./
 COPY .env.example ./.env.example
@@ -48,4 +49,4 @@ FROM base AS dashboard
 
 EXPOSE 8511
 
-CMD ["python", "-m", "streamlit", "run", "dashboard.py", "--server.address", "0.0.0.0", "--server.port", "8511"]
+CMD ["python", "-m", "streamlit", "run", "dashboard.py", "--server.address", "0.0.0.0", "--server.port", "8511", "--server.maxUploadSize", "512", "--server.maxMessageSize", "512"]
